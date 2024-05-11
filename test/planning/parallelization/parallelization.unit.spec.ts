@@ -14,7 +14,7 @@ describe('Parallelization Test', () => {
     const sortedStages = StageParallelization.of(new Set([stage1, stage2]));
 
     //then
-    assert.equal(sortedStages.all.length, 1);
+    assert.equal(sortedStages.print(), 'Stage1, Stage2');
   });
 
   it('test simple dependencies', () => {
@@ -33,10 +33,10 @@ describe('Parallelization Test', () => {
     );
 
     //then
-    assert.equal(sortedStages.print(), 'Stage1 | Stage2, Stage3 | Stage4');
+    assert.equal(sortedStages.print(), 'Stage1 THEN Stage2, Stage3 THEN Stage4');
   });
 
-  it('cantBeDoneWhenThereIsACycle ', () => {
+  it('cannot be done when there is a cycle ', () => {
     //given
     const stage1 = new Stage('Stage1');
     const stage2 = new Stage('Stage2');
