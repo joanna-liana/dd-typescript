@@ -12,7 +12,7 @@ export class ParallelStagesList {
   }
 
   public print() {
-    return this.all.map((stages) => stages.print()).join(' | ');
+    return this.all.map((stages) => stages.print()).join(' THEN ');
   }
 
   public add(newParallelStages: ParallelStages): ParallelStagesList {
