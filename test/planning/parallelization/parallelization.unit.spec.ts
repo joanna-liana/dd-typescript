@@ -1,8 +1,5 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { StageParallelization } from '../../../src/parallelization/index.js';
-import { Stage } from '../../../src/parallelization/stage.js';
+import { StageParallelization } from '../../../src/parallelization';
+import { Stage } from '../../../src/parallelization/stage';
 
 describe('Parallelization Test', () => {
   it('everything can be done in parallel when there are no dependencies', () => {
@@ -14,7 +11,8 @@ describe('Parallelization Test', () => {
     const sortedStages = StageParallelization.of(new Set([stage1, stage2]));
 
     //then
-    assert.equal(sortedStages.print(), 'Stage1, Stage2');
+    expect(sortedStages.all.length).toBe(1);
+    expect(sortedStages.print()).toBe('Stage1, Stage2');
   });
 
   it('test simple dependencies', () => {
@@ -33,7 +31,8 @@ describe('Parallelization Test', () => {
     );
 
     //then
-    assert.equal(sortedStages.print(), 'Stage1 THEN Stage2, Stage3 THEN Stage4');
+    expect(sortedStages.all.length).toBe(3);
+    expect(sortedStages.print()).toBe('Stage1 THEN Stage2, Stage3 THEN Stage4');
   });
 
   it('cannot be done when there is a cycle ', () => {
@@ -47,6 +46,6 @@ describe('Parallelization Test', () => {
     const sortedStages = StageParallelization.of(new Set([stage1, stage2]));
 
     //then
-    assert.equal(sortedStages.all.length, 0);
+    expect(sortedStages.all.length).toBe(0);
   });
 });
