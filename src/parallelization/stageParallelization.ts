@@ -14,6 +14,7 @@ export const StageParallelization = {
     const roots = findRoots(graph);
 
     const parallelStages = detectSameDepthNodes(graph, roots);
+    // TODO: remove those that share resources - leave just 1
 
     const parallelStagesParsed: ParallelStages[] = Object.values(
       parallelStages,
