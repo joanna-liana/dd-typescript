@@ -8,7 +8,6 @@ import {
 import * as schema from '#schema';
 import { TimeSlot } from '#shared';
 import { getPool } from '#storage';
-import { secondsToMilliseconds } from 'date-fns';
 import assert from 'node:assert';
 import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
@@ -76,29 +75,28 @@ describe('ResourceAvailabilityOptimisticLocking', () => {
     );
     await resourceAvailabilityRepository.saveNew(resourceAvailability);
     const results: boolean[] = [];
+
     //when
+    const promises = Array.from({ length: 10 }).map(async () => {
+      const loaded = await resourceAvailabilityRepository.loadById(
+        resourceAvailabilityId,
+      );
 
-    const promises = new Array(10).fill(null).map(() =>
-      wrapPromise(async () => {
-        try {
-          const loaded = await resourceAvailabilityRepository.loadById(
-            resourceAvailabilityId,
-          );
-          loaded.block(Owner.newOne());
-          results.push(
-            await resourceAvailabilityRepository.saveCheckingVersion(loaded),
-          );
-        } catch (error) {
-          console.error(error);
-          // ignore
-        }
-      }, secondsToMilliseconds(10)).catch(),
-    );
+      loaded.block(Owner.newOne());
 
-    await Promise.all(promises).catch();
+      const hasSavedSuccessfully =
+        await resourceAvailabilityRepository.saveCheckingVersion(loaded);
+
+      results.push(hasSavedSuccessfully);
+    });
+
+    await Promise.allSettled(promises);
+
+    console.log(results);
 
     //then
-    assert.ok(results.includes(false));
+    assert.ok(results.length === 10);
+    assert.ok(results.filter((result) => result === true).length === 1);
     assert.ok(
       (await resourceAvailabilityRepository.loadById(resourceAvailabilityId))
         .version < 10,
@@ -106,14 +104,24 @@ describe('ResourceAvailabilityOptimisticLocking', () => {
   });
 });
 
+const rejectWithReason = (
+  reason: string,
+  reject: (reason?: unknown) => void,
+) => {
+  console.error('REJECT REASON', reason);
+  reject(reason);
+};
+
 const awaitTimeout = (delay: number, reason: string) =>
   new Promise((resolve, reject) =>
     setTimeout(
-      () => (reason === undefined ? resolve({}) : reject(reason)),
+      () =>
+        reason === undefined ? resolve({}) : rejectWithReason(reason, reject),
       delay,
     ),
   );
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const wrapPromise = <T>(
   promise: () => Promise<T>,
   delay: number,
