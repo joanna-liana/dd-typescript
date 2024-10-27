@@ -1,11 +1,10 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
-import { Edge, FeedbackArcSeOnGraph, Node } from '#sorter';
+import { Edge, Node, feedbackArcSeOnGraph } from '#sorter';
+import { deepEquals } from '#utils';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { deepEquals } from '../../src/utils';
 
-describe('FeedbackArcSetOnGraph', () => {
-  it('can find minimum number of edges to remove to make the graph acyclic', () => {
+void describe('FeedbackArcSetOnGraph', () => {
+  void it('can find minimum number of edges to remove to make the graph acyclic', () => {
     //given
     let node1 = new Node('1');
     let node2 = new Node('2');
@@ -18,12 +17,7 @@ describe('FeedbackArcSetOnGraph', () => {
     node3 = node3.dependsOn(node1);
 
     //when
-    const toRemove: Edge[] = FeedbackArcSeOnGraph.calculate([
-      node1,
-      node2,
-      node3,
-      node4,
-    ]);
+    const toRemove: Edge[] = feedbackArcSeOnGraph([node1, node2, node3, node4]);
 
     assert.equal(toRemove.length, 2);
     assert.ok(
@@ -33,7 +27,7 @@ describe('FeedbackArcSetOnGraph', () => {
     );
   });
 
-  it('when graph is acyclic there is nothing to remove', () => {
+  void it('when graph is acyclic there is nothing to remove', () => {
     //given
     let node1 = new Node('1');
     let node2 = new Node('2');
@@ -44,12 +38,7 @@ describe('FeedbackArcSetOnGraph', () => {
     node1 = node1.dependsOn(node4);
 
     //when
-    const toRemove: Edge[] = FeedbackArcSeOnGraph.calculate([
-      node1,
-      node2,
-      node3,
-      node4,
-    ]);
+    const toRemove: Edge[] = feedbackArcSeOnGraph([node1, node2, node3, node4]);
 
     //then
     assert.equal(toRemove.length, 0);

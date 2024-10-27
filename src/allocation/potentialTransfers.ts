@@ -5,6 +5,8 @@ import {
   SimulatedProject,
 } from '#simulation';
 import {
+  AllocatableCapabilityId,
+  AllocatableCapabilitySummary,
   AllocatedCapability,
   ProjectAllocationsId,
   ProjectsAllocationsSummary,
@@ -22,7 +24,7 @@ export class PotentialTransfers {
   transfer = (
     projectFrom: ProjectAllocationsId,
     projectTo: ProjectAllocationsId,
-    capability: AllocatedCapability,
+    allocatedCapability: AllocatedCapability,
     forSlot: TimeSlot,
   ): PotentialTransfers => {
     const from = this.summary.projectAllocations.get(projectFrom);
@@ -31,7 +33,7 @@ export class PotentialTransfers {
       return this;
     }
     const newAllocationsProjectFrom = from.remove(
-      capability.allocatedCapabilityID,
+      allocatedCapability.allocatedCapabilityId,
       forSlot,
     );
     if (deepEquals(newAllocationsProjectFrom, from)) {
@@ -40,8 +42,8 @@ export class PotentialTransfers {
     this.summary.projectAllocations.set(projectFrom, newAllocationsProjectFrom);
     const newAllocationsProjectTo = to.add(
       new AllocatedCapability(
-        capability.resourceId,
-        capability.capability,
+        allocatedCapability.allocatedCapabilityId,
+        allocatedCapability.capability,
         forSlot,
       ),
     );
@@ -71,6 +73,41 @@ export class PotentialTransfers {
       allDemands.all.map(
         (demand) => new SimulatedDemand(demand.capability, demand.slot),
       ),
+    );
+  };
+
+  public transferWithSummary = (
+    projectTo: ProjectAllocationsId,
+    capabilityToTransfer: AllocatableCapabilitySummary,
+    forSlot: TimeSlot,
+  ): PotentialTransfers => {
+    const projectToMoveFrom = this.findProjectToMoveFrom(
+      capabilityToTransfer.id,
+      forSlot,
+    );
+    if (projectToMoveFrom != null) {
+      return this.transfer(
+        projectToMoveFrom,
+        projectTo,
+        new AllocatedCapability(
+          capabilityToTransfer.id,
+          capabilityToTransfer.capabilities,
+          capabilityToTransfer.timeSlot,
+        ),
+        forSlot,
+      );
+    }
+    return this;
+  };
+
+  private findProjectToMoveFrom = (
+    cap: AllocatableCapabilityId,
+    _inSlot: TimeSlot,
+  ): ProjectAllocationsId => {
+    return (
+      this.summary.projectAllocations.filter(
+        ({ value }) => value.find(cap) !== null,
+      )[0]?.key ?? null
     );
   };
 }

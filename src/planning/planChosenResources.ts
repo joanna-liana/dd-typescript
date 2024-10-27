@@ -1,9 +1,10 @@
-import { AvailabilityFacade, Calendars } from '#availability';
-import { ResourceName, TimeSlot } from '#shared';
+import { AvailabilityFacade, Calendars, ResourceId } from '#availability';
+import { TimeSlot } from '#shared';
 import { ProjectId } from '#simulation';
 import { transactional } from '#storage';
-import { ObjectSet } from '#utils';
+import { Clock, ObjectSet, event, type EventsPublisher } from '#utils';
 import { ChosenResources } from './chosenResources';
+import type { NeededResourcesChosen } from './neededResourcesChosen';
 import { Stage } from './parallelization';
 import type { ProjectRepository } from './projectRepository';
 import { Schedule } from './schedule';
@@ -12,45 +13,62 @@ export class PlanChosenResources {
   constructor(
     private readonly repository: ProjectRepository,
     private readonly availabilityFacade: AvailabilityFacade,
+    private readonly eventsPublisher: EventsPublisher,
+    private readonly clock: Clock,
   ) {
     this.repository = repository;
     this.availabilityFacade = availabilityFacade;
   }
 
-  @transactional()
+  @transactional
   public async defineResourcesWithinDates(
     projectId: ProjectId,
-    chosenResources: ObjectSet<ResourceName>,
+    chosenResources: ObjectSet<ResourceId>,
     timeBoundaries: TimeSlot,
   ): Promise<void> {
     const project = await this.repository.getById(projectId);
     project.addChosenResources(
       new ChosenResources(chosenResources, timeBoundaries),
     );
-
     await this.repository.save(project);
+    await this.eventsPublisher.publish(
+      event<NeededResourcesChosen>(
+        'NeededResourcesChosen',
+        {
+          projectId,
+          neededResources: chosenResources,
+          timeSlot: timeBoundaries,
+        },
+        this.clock,
+      ),
+    );
   }
 
-  @transactional()
+  @transactional
   public async adjustStagesToResourceAvailability(
     projectId: ProjectId,
     timeBoundaries: TimeSlot,
     ...stages: Stage[]
   ): Promise<void> {
     const neededResources = this.neededResources(stages);
-    const project = await this.repository.getById(projectId);
+    let project = await this.repository.getById(projectId);
     await this.defineResourcesWithinDates(
       projectId,
       neededResources,
       timeBoundaries,
     );
-    //TODO when availability is implemented
-    const neededResourcesCalendars = Calendars.of();
+    const neededResourcesCalendars =
+      await this.availabilityFacade.loadCalendars(
+        neededResources,
+        timeBoundaries,
+      );
     const schedule = this.createScheduleAdjustingToCalendars(
       neededResourcesCalendars,
       stages,
     );
+    project = await this.repository.getById(projectId);
     project.addSchedule(schedule);
+    await this.repository.save(project);
   }
 
   private createScheduleAdjustingToCalendars = (

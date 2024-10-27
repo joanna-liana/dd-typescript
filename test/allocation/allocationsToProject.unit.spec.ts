@@ -1,61 +1,58 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
+  AllocatableCapabilityId,
   AllocatedCapability,
   Allocations,
-  CapabilitiesAllocated,
-  CapabilityReleased,
+  CapabilitySelector,
   Demand,
   Demands,
   ProjectAllocations,
   ProjectAllocationsId,
-  ResourceId,
 } from '#allocation';
 import { Capability, TimeSlot } from '#shared';
-import { UUID, deepEquals } from '#utils';
 import { UTCDate } from '@date-fns/utc';
 import { addHours } from 'date-fns';
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
+import { assertEquals, assertThatArray } from '../asserts';
 const permission = Capability.permission;
+const canJustPerform = CapabilitySelector.canJustPerform;
 
-describe('AllocationsToProject', () => {
+void describe('AllocationsToProject', () => {
   const WHEN = new UTCDate();
   const PROJECT_ID = ProjectAllocationsId.newOne();
-  const ADMIN_ID = ResourceId.newOne();
+  const ADMIN_ID = AllocatableCapabilityId.newOne();
   const FEB_1 = TimeSlot.createDailyTimeSlotAtUTC(2020, 2, 1);
   const FEB_2 = TimeSlot.createDailyTimeSlotAtUTC(2020, 2, 2);
   const JANUARY = TimeSlot.createDailyTimeSlotAtUTC(2020, 1, 1);
 
-  it('can allocate', () => {
+  void it('can allocate', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
 
     //when
     const event = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
 
     //then
-    assert.ok(event);
+    assert(event);
     const capabilitiesAllocated = event;
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilitiesAllocated(
-          capabilitiesAllocated.allocatedCapabilityId,
-          PROJECT_ID,
-          Demands.none(),
-          WHEN,
-          capabilitiesAllocated.eventId,
-        ),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilitiesAllocated',
+      data: {
+        allocatedCapabilityId: capabilitiesAllocated.data.allocatedCapabilityId,
+        projectId: PROJECT_ID,
+        missingDemands: Demands.none(),
+        occurredAt: WHEN,
+        eventId: capabilitiesAllocated.data.eventId,
+      },
+    });
   });
 
-  it('cant allocate when requested time slot not within project slot', () => {
+  void it('cant allocate when requested time slot not within project slot', () => {
     //given
     const allocations = new ProjectAllocations(
       PROJECT_ID,
@@ -67,7 +64,7 @@ describe('AllocationsToProject', () => {
     //when
     const event = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
@@ -76,17 +73,22 @@ describe('AllocationsToProject', () => {
     assert.equal(event, null);
   });
 
-  it('allocating has no effect when capability already allocated', () => {
+  void it('allocating has no effect when capability already allocated', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
 
     //and
-    allocations.allocate(ADMIN_ID, permission('ADMIN'), FEB_1, WHEN);
+    allocations.allocate(
+      ADMIN_ID,
+      canJustPerform(permission('ADMIN')),
+      FEB_1,
+      WHEN,
+    );
 
     //when
     const event = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
@@ -95,7 +97,7 @@ describe('AllocationsToProject', () => {
     assert.equal(event, null);
   });
 
-  it('there are no missing demands when all allocated', () => {
+  void it('there are no missing demands when all allocated', () => {
     //given
     const demands = Demands.of(
       new Demand(permission('ADMIN'), FEB_1),
@@ -104,32 +106,35 @@ describe('AllocationsToProject', () => {
     //and
     const allocations = ProjectAllocations.withDemands(PROJECT_ID, demands);
     //and
-    allocations.allocate(ADMIN_ID, permission('ADMIN'), FEB_1, WHEN);
+    allocations.allocate(
+      ADMIN_ID,
+      canJustPerform(permission('ADMIN')),
+      FEB_1,
+      WHEN,
+    );
     //when
     const event = allocations.allocate(
       ADMIN_ID,
-      Capability.skill('JAVA'),
+      canJustPerform(Capability.skill('JAVA')),
       FEB_1,
       WHEN,
     );
     //then
     assert.ok(event);
     const capabilitiesAllocated = event;
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilitiesAllocated(
-          capabilitiesAllocated.allocatedCapabilityId,
-          PROJECT_ID,
-          Demands.none(),
-          WHEN,
-          capabilitiesAllocated.eventId,
-        ),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilitiesAllocated',
+      data: {
+        allocatedCapabilityId: capabilitiesAllocated.data.allocatedCapabilityId,
+        projectId: PROJECT_ID,
+        missingDemands: Demands.none(),
+        occurredAt: WHEN,
+        eventId: capabilitiesAllocated.data.eventId,
+      },
+    });
   });
 
-  it('missing demands are present when allocating for different than demanded slot', () => {
+  void it('missing demands are present when allocating for different than demanded slot', () => {
     //given
     const demands = Demands.of(
       new Demand(permission('ADMIN'), FEB_1),
@@ -138,78 +143,85 @@ describe('AllocationsToProject', () => {
     //and
     const allocations = ProjectAllocations.withDemands(PROJECT_ID, demands);
     //and
-    allocations.allocate(ADMIN_ID, permission('ADMIN'), FEB_1, WHEN);
+    allocations.allocate(
+      ADMIN_ID,
+      canJustPerform(permission('ADMIN')),
+      FEB_1,
+      WHEN,
+    );
     //when
     const event = allocations.allocate(
       ADMIN_ID,
-      Capability.skill('JAVA'),
+      canJustPerform(Capability.skill('JAVA')),
       FEB_2,
       WHEN,
     );
     //then
-    assert.ok(
-      deepEquals(
-        allocations.missingDemands(),
-        Demands.of(new Demand(Capability.skill('JAVA'), FEB_1)),
-      ),
+    assertEquals(
+      allocations.missingDemands(),
+      Demands.of(new Demand(Capability.skill('JAVA'), FEB_1)),
     );
 
     assert.ok(event);
     const capabilitiesAllocated = event;
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilitiesAllocated(
-          capabilitiesAllocated.allocatedCapabilityId,
-          PROJECT_ID,
-          Demands.of(new Demand(Capability.skill('JAVA'), FEB_1)),
-          WHEN,
-          capabilitiesAllocated.eventId,
-        ),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilitiesAllocated',
+      data: {
+        allocatedCapabilityId: capabilitiesAllocated.data.allocatedCapabilityId,
+        projectId: PROJECT_ID,
+        missingDemands: Demands.of(new Demand(Capability.skill('JAVA'), FEB_1)),
+        occurredAt: WHEN,
+        eventId: capabilitiesAllocated.data.eventId,
+      },
+    });
   });
 
-  it('can release', () => {
+  void it('can release', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
     //and
     const allocatedAdmin = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
+    );
+    const adminId = AllocatableCapabilityId.from(
+      allocatedAdmin!.data.allocatedCapabilityId,
     );
     //when
     assert.ok(allocatedAdmin);
-    const event = allocations.release(
-      allocatedAdmin.allocatedCapabilityId,
-      FEB_1,
-      WHEN,
-    );
+    const event = allocations.release(adminId, FEB_1, WHEN);
 
     //then
     assert.ok(event);
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilityReleased(PROJECT_ID, Demands.none(), WHEN, event.eventId),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilityReleased',
+      data: {
+        projectId: PROJECT_ID,
+        missingDemands: Demands.none(),
+        occurredAt: WHEN,
+        eventId: event.data.eventId,
+      },
+    });
   });
 
-  it('releasing has no effect when capability was not allocated', () => {
+  void it('releasing has no effect when capability was not allocated', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
 
     //when
-    const event = allocations.release(UUID.randomUUID(), FEB_1, WHEN);
+    const event = allocations.release(
+      AllocatableCapabilityId.newOne(),
+      FEB_1,
+      WHEN,
+    );
 
     //then
     assert.equal(event, null);
   });
 
-  it('missing demands are present after releasing some of allocated capabilities', () => {
+  void it('missing demands are present after releasing some of allocated capabilities', () => {
     //given
     const demandForJava = new Demand(Capability.skill('JAVA'), FEB_1);
     const demandForAdmin = new Demand(permission('ADMIN'), FEB_1);
@@ -220,42 +232,45 @@ describe('AllocationsToProject', () => {
     //and
     const allocatedAdmin = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
     assert.ok(allocatedAdmin);
-    allocations.allocate(ADMIN_ID, Capability.skill('JAVA'), FEB_1, WHEN);
+    allocations.allocate(
+      AllocatableCapabilityId.newOne(),
+      canJustPerform(Capability.skill('JAVA')),
+      FEB_1,
+      WHEN,
+    );
     //when
     assert.ok(allocatedAdmin);
     const event = allocations.release(
-      allocatedAdmin.allocatedCapabilityId,
+      AllocatableCapabilityId.from(allocatedAdmin.data.allocatedCapabilityId),
       FEB_1,
       WHEN,
     );
 
     //then
     assert.ok(event);
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilityReleased(
-          PROJECT_ID,
-          Demands.of(demandForAdmin),
-          WHEN,
-          event.eventId,
-        ),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilityReleased',
+      data: {
+        projectId: PROJECT_ID,
+        missingDemands: Demands.of(demandForAdmin),
+        occurredAt: WHEN,
+        eventId: event.data.eventId,
+      },
+    });
   });
 
-  it('releasing has no effect when releasing slot not within allocated slot', () => {
+  void it('releasing has no effect when releasing slot not within allocated slot', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
     //and
     const allocatedAdmin = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
@@ -263,7 +278,7 @@ describe('AllocationsToProject', () => {
 
     //when
     const event = allocations.release(
-      allocatedAdmin.allocatedCapabilityId,
+      AllocatableCapabilityId.from(allocatedAdmin.data.allocatedCapabilityId),
       FEB_2,
       WHEN,
     );
@@ -272,13 +287,13 @@ describe('AllocationsToProject', () => {
     assert.equal(event, null);
   });
 
-  it('releasing small part of slot leaves the rest', () => {
+  void it('releasing small part of slot leaves the rest', () => {
     //given
     const allocations = ProjectAllocations.empty(PROJECT_ID);
     //and
     const allocatedAdmin = allocations.allocate(
       ADMIN_ID,
-      permission('ADMIN'),
+      canJustPerform(permission('ADMIN')),
       FEB_1,
       WHEN,
     );
@@ -294,26 +309,34 @@ describe('AllocationsToProject', () => {
 
     //when
     const event = allocations.release(
-      allocatedAdmin.allocatedCapabilityId,
+      AllocatableCapabilityId.from(allocatedAdmin.data.allocatedCapabilityId),
       fifteenMinutesIn1Feb,
       WHEN,
     );
 
     //then
     assert.ok(event);
-    assert.ok(
-      deepEquals(
-        event,
-        new CapabilityReleased(PROJECT_ID, Demands.none(), WHEN, event.eventId),
-      ),
-    );
+    assertEquals(event, {
+      type: 'CapabilityReleased',
+      data: {
+        projectId: PROJECT_ID,
+        missingDemands: Demands.none(),
+        occurredAt: WHEN,
+        eventId: event.data.eventId,
+      },
+    });
     assert.equal(allocations.allocations.all.length, 2);
-    assert.ok(
-      [
-        new AllocatedCapability(ADMIN_ID, permission('ADMIN'), oneHourBefore),
-        new AllocatedCapability(ADMIN_ID, permission('ADMIN'), theRest),
-      ].filter((c) => allocations.allocations.all.some((a) => deepEquals(a, c)))
-        .length === 2,
+    assertThatArray(allocations.allocations.all).containsExactlyInAnyOrder(
+      new AllocatedCapability(
+        ADMIN_ID,
+        canJustPerform(permission('ADMIN')),
+        oneHourBefore,
+      ),
+      new AllocatedCapability(
+        ADMIN_ID,
+        canJustPerform(permission('ADMIN')),
+        theRest,
+      ),
     );
   });
 });

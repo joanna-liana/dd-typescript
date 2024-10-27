@@ -1,3 +1,4 @@
+import type { ResourceId } from '.';
 import type { TimeSlot } from '../shared';
 import { ObjectSet, deepEquals } from '../utils';
 import { Owner } from './owner';
@@ -10,19 +11,10 @@ export class ResourceGroupedAvailability {
     private readonly resourceAvailabilities: ResourceAvailability[],
   ) {}
 
-  // static of = (resourceId: ResourceAvailabilityId , timeslot: TimeSlot): ResourceGroupedAvailability => {
-  //     const resourceAvailabilities =  Segments
-  //             .split(timeslot, defaultSegment())
-  //
-  //             .map(segment => new ResourceAvailability(ResourceAvailabilityId.newOne(), resourceId, segment))
-  //             .toList();
-  //     return new ResourceGroupedAvailability(resourceAvailabilities);
-  // }
-
   public static of = (
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     timeslot: TimeSlot,
-    parentId: ResourceAvailabilityId | null = null,
+    parentId: ResourceId | null = null,
   ): ResourceGroupedAvailability => {
     const resourceAvailabilities = Segments.split(
       timeslot,
@@ -70,10 +62,7 @@ export class ResourceGroupedAvailability {
     return this.resourceAvailabilities;
   }
 
-  public owners = (): ObjectSet<Owner> =>
-    ObjectSet.from(this.resourceAvailabilities.map((r) => r.blockedBy()));
-
-  public resourceId = (): ResourceAvailabilityId | null =>
+  public resourceId = (): ResourceId | null =>
     //resourceId are the same;
     this.resourceAvailabilities.map((r) => r.resourceId)[0] ?? null;
 
@@ -87,6 +76,11 @@ export class ResourceGroupedAvailability {
   public isDisabledEntirelyBy = (owner: Owner): boolean =>
     this.resourceAvailabilities.every((ra) => ra.isDisabledBy(owner));
 
+  public isEntirelyWithParentId = (parentId: ResourceId) =>
+    this.resourceAvailabilities.every((ra) =>
+      deepEquals(ra.resourceParentId, parentId),
+    );
+
   public findBlockedBy = (owner: Owner): ResourceAvailability[] =>
     this.resourceAvailabilities.filter((ra) =>
       deepEquals(ra.blockedBy(), owner),
@@ -94,4 +88,9 @@ export class ResourceGroupedAvailability {
 
   public isEntirelyAvailable = (): boolean =>
     this.resourceAvailabilities.every((ra) => ra.blockedBy().byNone());
+
+  public hasNoSlots = (): boolean => this.resourceAvailabilities.length === 0;
+
+  public owners = () =>
+    ObjectSet.from(this.resourceAvailabilities.map((ra) => ra.blockedBy()));
 }

@@ -1,14 +1,9 @@
 import type { KeyValue } from '#utils';
-import { bigserial, jsonb, pgTable, uuid, varchar } from 'drizzle-orm/pg-core';
-
-export type ResourceNameEntity = {
-  name: string;
-};
 
 export type StageEntity = {
   stageName: string;
   dependencies: StageEntity[];
-  resources: ResourceNameEntity[];
+  resources: string[];
   duration: number;
 };
 
@@ -19,7 +14,7 @@ export type ParallelStagesListEntity = {
 };
 
 export type ChosenResourcesEntity = {
-  resources: ResourceNameEntity[];
+  resources: string[];
   timeSlot: TimeSlotEntity;
 };
 
@@ -47,18 +42,13 @@ export type DemandsPerStageEntity = {
   demands: KeyValue<string, DemandsEntity>[];
 };
 
-export const projects = pgTable('projects', {
-  id: uuid('project_id').primaryKey(),
-  version: bigserial('version', { mode: 'number' }).notNull(),
-  name: varchar('name').notNull(),
-  parallelizedStages: jsonb(
-    'parallelized_stages',
-  ).$type<ParallelStagesListEntity>(),
-  chosenResources: jsonb('chosen_resources').$type<ChosenResourcesEntity>(),
-  schedule: jsonb('schedule').$type<ScheduleEntity>(),
-  allDemands: jsonb('all_demands').$type<DemandsEntity>(),
-  demandsPerStage: jsonb('demands_per_stage').$type<DemandsPerStageEntity>(),
-});
-
-export type ProjectEntity = typeof projects.$inferSelect;
-export type NewProjectEntity = typeof projects.$inferInsert;
+export type ProjectEntity = {
+  id: string;
+  version: number;
+  name: string;
+  parallelizedStages: ParallelStagesListEntity | null;
+  chosenResources: ChosenResourcesEntity | null;
+  schedule: ScheduleEntity | null;
+  allDemands: DemandsEntity | null;
+  demandsPerStage: DemandsPerStageEntity | null;
+};

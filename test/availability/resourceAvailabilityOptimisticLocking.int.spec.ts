@@ -1,9 +1,9 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
   Owner,
   ResourceAvailability,
   ResourceAvailabilityId,
   ResourceAvailabilityRepository,
+  ResourceId,
 } from '#availability';
 import * as schema from '#schema';
 import { TimeSlot } from '#shared';
@@ -13,14 +13,14 @@ import { after, before, describe, it } from 'node:test';
 import pg from 'pg';
 import { TestConfiguration } from '../setup';
 
-describe('ResourceAvailabilityOptimisticLocking', () => {
+void describe('ResourceAvailabilityOptimisticLocking', () => {
   const ONE_MONTH = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
   const testEnvironment = TestConfiguration();
   let client: pg.PoolClient;
   let resourceAvailabilityRepository: ResourceAvailabilityRepository;
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString } = await testEnvironment.start({ schema });
 
     const pool = getPool(connectionString);
     client = await pool.connect();
@@ -36,10 +36,10 @@ describe('ResourceAvailabilityOptimisticLocking', () => {
     }
   });
 
-  it('Update bumps version', async () => {
+  void it('Update bumps version', async () => {
     //given
     const resourceAvailabilityId = ResourceAvailabilityId.newOne();
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
     let resourceAvailability = new ResourceAvailability(
       resourceAvailabilityId,
       resourceId,
@@ -64,10 +64,10 @@ describe('ResourceAvailabilityOptimisticLocking', () => {
     );
   });
 
-  it(`can't update concurrently`, async () => {
+  void it(`can't update concurrently`, async () => {
     //given
     const resourceAvailabilityId = ResourceAvailabilityId.newOne();
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
     const resourceAvailability = new ResourceAvailability(
       resourceAvailabilityId,
       resourceId,

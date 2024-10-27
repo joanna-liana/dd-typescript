@@ -2,23 +2,18 @@ import { Node, Nodes } from '#sorter';
 import { ObjectSet } from '#utils';
 import { Stage } from './stage';
 
-export const StagesToNodes = {
-  calculate: (stages: Stage[]): Nodes<Stage> => {
-    let result = new Map<string, Node<Stage>>(
-      stages.map((stage) => [
-        stage.name,
-        new Node(stage.name, undefined, stage),
-      ]),
-    );
+export const stagesToNodes = (stages: Stage[]): Nodes<Stage> => {
+  let result = new Map<string, Node<Stage>>(
+    stages.map((stage) => [stage.name, new Node(stage.name, undefined, stage)]),
+  );
 
-    for (let i = 0; i < stages.length; i++) {
-      const stage = stages[i];
-      result = explicitDependencies(stage, result);
-      result = sharedResources(stage, stages.slice(i + 1), result);
-    }
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    result = explicitDependencies(stage, result);
+    result = sharedResources(stage, stages.slice(i + 1), result);
+  }
 
-    return new Nodes(ObjectSet.from<Node<Stage>>([...result.values()]));
-  },
+  return new Nodes(ObjectSet.from<Node<Stage>>([...result.values()]));
 };
 
 const sharedResources = (
@@ -29,9 +24,7 @@ const sharedResources = (
   for (const other of withStages) {
     if (stage.name !== other.name) {
       if (
-        stage.resources.some((r) =>
-          other.resources.some((oth) => oth.name === r.name),
-        )
+        stage.resources.some((r) => other.resources.some((oth) => oth === r))
       ) {
         if (other.resources.length > stage.resources.length) {
           let node = result.get(stage.name)!;

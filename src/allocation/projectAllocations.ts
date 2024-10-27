@@ -1,23 +1,24 @@
-import { Capability, TimeSlot } from '#shared';
-import { UUID, deepEquals } from '#utils';
+import { TimeSlot } from '#shared';
+import { UUID, deepEquals, event } from '#utils';
 import type { UTCDate } from '@date-fns/utc';
 import {
+  AllocatableCapabilityId,
   AllocatedCapability,
   Allocations,
+  CapabilitySelector,
   Demands,
-  ProjectAllocationScheduled,
   ProjectAllocationsId,
-  ResourceId,
+  type ProjectAllocationScheduled,
 } from '.';
-import { CapabilitiesAllocated } from './capabilitiesAllocated';
-import { CapabilityReleased } from './capabilitiesReleased';
-import { ProjectAllocationsDemandsScheduled } from './projectAllocationDemandsScheduled';
+import { type CapabilitiesAllocated } from './capabilitiesAllocated';
+import { type CapabilityReleased } from './capabilitiesReleased';
+import { type ProjectAllocationsDemandsScheduled } from './projectAllocationDemandsScheduled';
 
 export class ProjectAllocations {
-  #projectId: ProjectAllocationsId;
-  #allocations: Allocations;
-  #demands: Demands;
-  #timeSlot: TimeSlot;
+  private _projectId: ProjectAllocationsId;
+  private _allocations: Allocations;
+  private _demands: Demands;
+  private _timeSlot: TimeSlot;
 
   constructor(
     projectId: ProjectAllocationsId,
@@ -25,10 +26,10 @@ export class ProjectAllocations {
     scheduledDemands: Demands,
     timeSlot: TimeSlot = TimeSlot.empty(),
   ) {
-    this.#projectId = projectId;
-    this.#allocations = allocations;
-    this.#demands = scheduledDemands;
-    this.#timeSlot = timeSlot;
+    this._projectId = projectId;
+    this._allocations = allocations;
+    this._demands = scheduledDemands;
+    this._timeSlot = timeSlot;
   }
 
   public static empty = (projectId: ProjectAllocationsId) =>
@@ -45,17 +46,17 @@ export class ProjectAllocations {
   ) => new ProjectAllocations(projectId, Allocations.none(), demands);
 
   allocate = (
-    resourceId: ResourceId,
-    capability: Capability,
+    allocatableCapabilityId: AllocatableCapabilityId,
+    capability: CapabilitySelector,
     requestedSlot: TimeSlot,
     when: UTCDate,
   ): CapabilitiesAllocated | null => {
     const allocatedCapability = new AllocatedCapability(
-      resourceId,
+      allocatableCapabilityId,
       capability,
       requestedSlot,
     );
-    const newAllocations = this.#allocations.add(allocatedCapability);
+    const newAllocations = this._allocations.add(allocatedCapability);
 
     if (
       this.nothingAllocated(newAllocations) ||
@@ -63,80 +64,100 @@ export class ProjectAllocations {
     ) {
       return null;
     }
-    this.#allocations = newAllocations;
+    this._allocations = newAllocations;
 
-    return new CapabilitiesAllocated(
-      allocatedCapability.allocatedCapabilityID,
-      this.#projectId,
-      this.missingDemands(),
-      when,
-    );
+    return {
+      type: 'CapabilitiesAllocated',
+      data: {
+        allocatedCapabilityId: allocatedCapability.allocatedCapabilityId,
+        projectId: this._projectId,
+        missingDemands: this.missingDemands(),
+        occurredAt: when,
+        eventId: UUID.randomUUID(),
+      },
+    };
   };
 
   private nothingAllocated = (newAllocations: Allocations): boolean =>
-    deepEquals(this.#allocations, newAllocations);
+    deepEquals(this._allocations, newAllocations);
 
   private withinProjectTimeSlot = (requestedSlot: TimeSlot) =>
-    !this.hasTimeSlot() || requestedSlot.within(this.#timeSlot);
+    !this.hasTimeSlot() || requestedSlot.within(this._timeSlot);
 
   public release = (
-    allocatedCapabilityId: UUID,
+    allocatedCapabilityId: AllocatableCapabilityId,
     timeSlot: TimeSlot,
     when: UTCDate,
   ): CapabilityReleased | null => {
-    const newAllocations = this.#allocations.remove(
+    const newAllocations = this._allocations.remove(
       allocatedCapabilityId,
       timeSlot,
     );
-    if (deepEquals(newAllocations, this.#allocations)) {
+    if (deepEquals(newAllocations, this._allocations)) {
       return null;
     }
-    this.#allocations = newAllocations;
-    return new CapabilityReleased(this.#projectId, this.missingDemands(), when);
+    this._allocations = newAllocations;
+    return {
+      type: 'CapabilityReleased',
+      data: {
+        projectId: this._projectId,
+        missingDemands: this.missingDemands(),
+        occurredAt: when,
+        eventId: UUID.randomUUID(),
+      },
+    };
   };
 
   missingDemands = (): Demands =>
-    this.#demands.missingDemands(this.#allocations);
+    this._demands.missingDemands(this._allocations);
 
-  hasTimeSlot = () => !this.#timeSlot.equals(TimeSlot.empty());
+  hasTimeSlot = () => !this._timeSlot.equals(TimeSlot.empty());
 
   public defineSlot = (
     timeSlot: TimeSlot,
     when: UTCDate,
   ): ProjectAllocationScheduled | null => {
-    this.#timeSlot = timeSlot;
-    return new ProjectAllocationScheduled(
-      this.#projectId,
-      this.#timeSlot,
-      when,
-    );
+    this._timeSlot = timeSlot;
+
+    return {
+      type: 'ProjectAllocationScheduled',
+      data: {
+        fromTo: timeSlot,
+        projectId: this._projectId,
+        occurredAt: when,
+        eventId: UUID.randomUUID(),
+      },
+    };
   };
 
   public addDemands = (
     newDemands: Demands,
     when: UTCDate,
   ): ProjectAllocationsDemandsScheduled | null => {
-    this.#demands = this.#demands.withNew(newDemands);
-    return new ProjectAllocationsDemandsScheduled(
-      this.#projectId,
-      this.missingDemands(),
-      when,
+    this._demands = this._demands.withNew(newDemands);
+    return event<ProjectAllocationsDemandsScheduled>(
+      'ProjectAllocationsDemandsScheduled',
+      {
+        projectId: this._projectId,
+        missingDemands: this.missingDemands(),
+        occurredAt: when,
+      },
     );
   };
 
   public get id(): ProjectAllocationsId {
-    return this.#projectId;
+    return this._projectId;
   }
 
   public get demands(): Demands {
-    return this.#demands;
+    return this._demands;
   }
 
   public get allocations(): Allocations {
-    return this.#allocations;
+    return this._allocations;
   }
 
   public get timeSlot(): TimeSlot {
-    return this.#timeSlot;
+    return this._timeSlot;
   }
 }

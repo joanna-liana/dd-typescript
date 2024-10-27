@@ -1,10 +1,10 @@
 import { TimeSlot } from '#shared';
-import { PostgresRepository } from '#storage';
+import { PostgresRepository, parseDBDate } from '#storage';
 import { ObjectSet, UUID } from '#utils';
 import { UTCDate } from '@date-fns/utc';
 import pg from 'pg';
 import format from 'pg-format';
-import { Blockade, Owner } from '.';
+import { Blockade, Owner, ResourceId } from '.';
 import { ResourceAvailability } from './resourceAvailability';
 import { ResourceAvailabilityId } from './resourceAvailabilityId';
 import { ResourceGroupedAvailability } from './resourceGroupedAvailability';
@@ -49,6 +49,8 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
   private saveAllNew = async (
     availabilities: ResourceAvailability[],
   ): Promise<void> => {
+    if (availabilities.length === 0) return;
+
     const params = availabilities.reduce<InsertResourceAvailability[]>(
       (params, ra) => [
         ...params,
@@ -68,7 +70,7 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
 
     const sql = format(
       `
-    INSERT INTO  availabilities
+    INSERT INTO  availability.availabilities
     (id, resource_id, resource_parent_id, from_date, to_date, taken_by, disabled, version)
     VALUES %L
     `,
@@ -79,12 +81,12 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
   };
 
   public loadAllWithinSlot = async (
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     segment: TimeSlot,
   ): Promise<ResourceAvailability[]> => {
     const sql = format(
       `
-    select * from availabilities where resource_id = %L
+    select * from availability.availabilities where resource_id = %L
     and from_date >= %L and to_date <= %L
     `,
       resourceId,
@@ -98,17 +100,17 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
   };
 
   public loadAllByParentIdWithinSlot = async (
-    parentId: ResourceAvailabilityId,
+    parentId: ResourceId,
     segment: TimeSlot,
   ): Promise<ResourceAvailability[]> => {
     const sql = format(
       `
-      select * from availabilities where resource_parent_id = %L
+      select * from availability.availabilities where resource_parent_id = %L
       and from_date >= %L and to_date <= %L
     `,
       parentId,
-      segment.from,
-      segment.to,
+      segment.from.toUTCString(),
+      segment.to.toUTCString(),
     );
 
     const result = await this.client.query<ResourceAvailabilityEntity>(sql);
@@ -132,6 +134,8 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
   public saveAllCheckingVersion = async (
     resourceAvailabilities: ResourceAvailability[],
   ): Promise<boolean> => {
+    if (resourceAvailabilities.length === 0) return false;
+
     const params = resourceAvailabilities.reduce<UpdateResourceAvailability[]>(
       (params, ra) => [
         ...params,
@@ -147,7 +151,7 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
 
     const sql = format(
       `
-      UPDATE availabilities AS a
+      UPDATE availability.availabilities AS a
       SET
         taken_by = v.taken_by::uuid,
         disabled = v.disabled::boolean,
@@ -166,7 +170,7 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
     availabilityId: ResourceAvailabilityId,
   ): Promise<ResourceAvailability> => {
     const sql = format(
-      `select * from availabilities where id = %L`,
+      `select * from availability.availabilities where id = %L`,
       availabilityId,
     );
 
@@ -176,15 +180,15 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
   };
 
   public loadAvailabilitiesOfRandomResourceWithin = async (
-    resourceIds: ObjectSet<ResourceAvailabilityId>,
+    resourceIds: ObjectSet<ResourceId>,
     normalized: TimeSlot,
   ): Promise<ResourceGroupedAvailability> => {
     const sql = format(
       `
       WITH AvailableResources AS (
         SELECT resource_id 
-        FROM availabilities
-        WHERE resource_id = ANY(%L)
+        FROM availability.availabilities
+        WHERE resource_id = ANY(ARRAY[%L]::uuid[])
         AND taken_by IS NULL
         AND from_date >= %L
         AND to_date <= %L
@@ -193,11 +197,11 @@ export class ResourceAvailabilityRepository extends PostgresRepository {
       RandomResource AS (
         SELECT resource_id
         FROM AvailableResources
-        RDER BY RANDOM()
+        ORDER BY RANDOM()
         LIMIT 1
       )
       SELECT a.*
-      FROM availabilities a
+      FROM availability.availabilities a
       JOIN RandomResource r ON a.resource_id = r.resource_id
       `,
       resourceIds,
@@ -218,10 +222,10 @@ const mapToResourceAvailability = (
 ): ResourceAvailability =>
   new ResourceAvailability(
     ResourceAvailabilityId.from(UUID.from(entity.id)),
-    ResourceAvailabilityId.from(UUID.from(entity.resource_id)),
-    new TimeSlot(new UTCDate(entity.from_date), new UTCDate(entity.to_date)),
+    ResourceId.from(UUID.from(entity.resource_id)),
+    new TimeSlot(parseDBDate(entity.from_date), parseDBDate(entity.to_date)),
     entity.resource_parent_id
-      ? ResourceAvailabilityId.from(UUID.from(entity.resource_parent_id))
+      ? ResourceId.from(UUID.from(entity.resource_parent_id))
       : null,
     new Blockade(
       entity.taken_by ? new Owner(UUID.from(entity.taken_by)) : Owner.none(),

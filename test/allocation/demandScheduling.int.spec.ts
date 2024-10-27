@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
   AllocationConfiguration,
   Demand,
   Demands,
+  InMemoryProjectAllocationsRepository,
   ProjectAllocationsId,
   type AllocationFacade,
 } from '#allocation';
@@ -14,7 +14,7 @@ import assert from 'node:assert';
 import { after, before, describe, it } from 'node:test';
 import { TestConfiguration } from '../setup';
 
-describe('DemandScheduling', () => {
+void describe('DemandScheduling', () => {
   const JAVA = new Demand(
     Capability.skill('JAVA'),
     TimeSlot.createDailyTimeSlotAtUTC(2022, 2, 2),
@@ -29,16 +29,18 @@ describe('DemandScheduling', () => {
   let allocationFacade: AllocationFacade;
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString } = await testEnvironment.start({ schema });
 
     const configuration = new AllocationConfiguration(connectionString);
 
-    allocationFacade = configuration.allocationFacade();
+    allocationFacade = configuration.allocationFacade(
+      new InMemoryProjectAllocationsRepository(),
+    );
   });
 
   after(async () => await testEnvironment.stop());
 
-  it('can create project and load project card', async () => {
+  void it('can create project and load project card', async () => {
     //given
     const projectId = ProjectAllocationsId.newOne();
 

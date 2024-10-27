@@ -1,14 +1,22 @@
-import { ResourceName, TimeSlot } from '#shared';
-import { transactional } from '#storage';
-import { Duration, ObjectSet } from '#utils';
+import type { ResourceId } from '#availability';
+import { TimeSlot } from '#shared';
+import { dbconnection, transactional } from '#storage';
+import {
+  Clock,
+  Duration,
+  ObjectSet,
+  event,
+  type EventsPublisher,
+} from '#utils';
 import type { UTCDate } from '@date-fns/utc';
+import type { CapabilitiesDemanded, CriticalStagePlanned } from '.';
 import type { Demands, DemandsPerStage } from './demands';
 import {
+  DurationCalculator,
   ParallelStagesList,
   Stage,
   StageParallelization,
 } from './parallelization';
-import { DurationCalculator } from './parallelization/durationCalculator';
 import type { PlanChosenResources } from './planChosenResources';
 import { Project } from './project';
 import { ProjectCard } from './projectCard';
@@ -21,15 +29,17 @@ export class PlanningFacade {
     private readonly repository: ProjectRepository,
     private readonly parallelization: StageParallelization,
     private readonly planChosenResourcesService: PlanChosenResources,
+    private readonly eventsPublisher: EventsPublisher,
+    private readonly clock: Clock,
   ) {}
 
-  @transactional()
+  @transactional
   public addNewProject(name: string, ...stages: Stage[]): Promise<ProjectId> {
     const parallelizedStages = this.parallelization.of(ObjectSet.from(stages));
     return this.addNewProjectParalellized(name, parallelizedStages);
   }
 
-  @transactional()
+  @transactional
   public async addNewProjectParalellized(
     name: string,
     parallelizedStages: ParallelStagesList,
@@ -39,7 +49,7 @@ export class PlanningFacade {
     return project.getId();
   }
 
-  @transactional()
+  @transactional
   public async defineStartDate(
     projectId: ProjectId,
     possibleStartDate: UTCDate,
@@ -49,7 +59,7 @@ export class PlanningFacade {
     return this.repository.save(project);
   }
 
-  @transactional()
+  @transactional
   public async defineProjectStages(
     projectId: ProjectId,
     ...stages: Stage[]
@@ -60,30 +70,50 @@ export class PlanningFacade {
     return this.repository.save(project);
   }
 
-  @transactional()
+  @transactional
   public async addDemands(
     projectId: ProjectId,
     demands: Demands,
   ): Promise<void> {
     const project = await this.repository.getById(projectId);
     project.addDemands(demands);
-    return this.repository.save(project);
+    await this.repository.save(project);
+    await this.eventsPublisher.publish(
+      event<CapabilitiesDemanded>(
+        'CapabilitiesDemanded',
+        {
+          projectId,
+          demands: project.getAllDemands(),
+        },
+        this.clock,
+      ),
+    );
   }
 
-  @transactional()
+  @transactional
   public async defineDemandsPerStage(
     projectId: ProjectId,
     demandsPerStage: DemandsPerStage,
   ): Promise<void> {
     const project = await this.repository.getById(projectId);
     project.addDemandsPerStage(demandsPerStage);
-    return this.repository.save(project);
+    await this.repository.save(project);
+    await this.eventsPublisher.publish(
+      event<CapabilitiesDemanded>(
+        'CapabilitiesDemanded',
+        {
+          projectId,
+          demands: project.getAllDemands(),
+        },
+        this.clock,
+      ),
+    );
   }
 
-  @transactional()
+  @transactional
   public defineResourcesWithinDates(
     projectId: ProjectId,
-    chosenResources: ObjectSet<ResourceName>,
+    chosenResources: ObjectSet<ResourceId>,
     timeBoundaries: TimeSlot,
   ): Promise<void> {
     return this.planChosenResourcesService.defineResourcesWithinDates(
@@ -93,7 +123,7 @@ export class PlanningFacade {
     );
   }
 
-  @transactional()
+  @transactional
   public async adjustStagesToResourceAvailability(
     projectId: ProjectId,
     timeBoundaries: TimeSlot,
@@ -106,11 +136,11 @@ export class PlanningFacade {
     );
   }
 
-  @transactional()
+  @transactional
   public async planCriticalStageWithResource(
     projectId: ProjectId,
     criticalStage: Stage,
-    criticalResource: ResourceName,
+    criticalResource: ResourceId,
     stageTimeSlot: TimeSlot,
   ): Promise<void> {
     const project = await this.repository.getById(projectId);
@@ -118,9 +148,21 @@ export class PlanningFacade {
       criticalStage,
       stageTimeSlot,
     );
+    await this.repository.save(project);
+    await this.eventsPublisher.publish(
+      event<CriticalStagePlanned>(
+        'CriticalStagePlanned',
+        {
+          projectId,
+          criticalResource,
+          stageTimeSlot,
+        },
+        this.clock,
+      ),
+    );
   }
 
-  @transactional()
+  @transactional
   public async planCriticalStage(
     projectId: ProjectId,
     criticalStage: Stage,
@@ -131,9 +173,21 @@ export class PlanningFacade {
       criticalStage,
       stageTimeSlot,
     );
+    await this.repository.save(project);
+    await this.eventsPublisher.publish(
+      event<CriticalStagePlanned>(
+        'CriticalStagePlanned',
+        {
+          projectId,
+          criticalResource: null!,
+          stageTimeSlot,
+        },
+        this.clock,
+      ),
+    );
   }
 
-  @transactional()
+  @transactional
   public async defineManualSchedule(
     projectId: ProjectId,
     schedule: Schedule,
@@ -145,17 +199,24 @@ export class PlanningFacade {
   public durationOf = (...stages: Stage[]): Duration =>
     DurationCalculator.calculate(stages);
 
-  public load = async (projectId: ProjectId): Promise<ProjectCard> => {
+  @dbconnection
+  public async load(projectId: ProjectId): Promise<ProjectCard> {
     const project = await this.repository.getById(projectId);
     return PlanningFacade.toSummary(project);
-  };
+  }
 
-  public loadAll = async (
-    projectsIds: ObjectSet<ProjectId>,
-  ): Promise<ProjectCard[]> =>
-    (await this.repository.findAllById(projectsIds)).map((project) =>
-      PlanningFacade.toSummary(project),
-    );
+  @dbconnection
+  public async loadAll(
+    projectsIds?: ObjectSet<ProjectId>,
+  ): Promise<ProjectCard[]> {
+    return projectsIds
+      ? (await this.repository.findAllById(projectsIds)).map((project) =>
+          PlanningFacade.toSummary(project),
+        )
+      : (await this.repository.findAll()).map((project) =>
+          PlanningFacade.toSummary(project),
+        );
+  }
 
   private static toSummary = (project: Project) =>
     new ProjectCard(

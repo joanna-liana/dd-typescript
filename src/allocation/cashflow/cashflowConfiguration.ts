@@ -1,28 +1,30 @@
-import { getDB, injectTransactionContext } from '#storage';
+import { getDB, injectDatabase } from '#storage';
+import { UtilsConfiguration } from '#utils';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import {
-  DrizzleCashflowRepository,
-  type CashflowRepository,
-} from './cashflowRepository';
+import { CashFlowFacade } from './cashflowFacade';
+import { type CashflowRepository } from './cashflowRepository';
 import * as schema from './schema';
-import { CashflowFacade } from './cashflowFacade';
+import { DrizzleCashflowRepository } from './drizzleCashflowRepository';
 
 export class CashflowConfiguration {
   constructor(
     public readonly connectionString: string,
+    private readonly utils: UtilsConfiguration = new UtilsConfiguration(),
     private readonly enableLogging: boolean = false,
-  ) {
-    console.log('connectionstring: ' + this.connectionString);
-  }
+  ) {}
 
   public cashflowFacade = (
     cashflowRepository?: CashflowRepository,
     getDatabase?: () => NodePgDatabase<typeof schema>,
-  ): CashflowFacade => {
+  ): CashFlowFacade => {
     const repository = cashflowRepository ?? this.cashflowRepository();
     const getDB = getDatabase ?? (() => this.db());
 
-    return injectTransactionContext(new CashflowFacade(repository), getDB);
+    return injectDatabase(
+      new CashFlowFacade(repository, this.utils.eventBus, this.utils.clock),
+      getDB(),
+      this.utils.eventBus.commit,
+    );
   };
 
   public cashflowRepository = (): CashflowRepository =>

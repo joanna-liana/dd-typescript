@@ -1,16 +1,17 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-floating-promises */
+import { ResourceId } from '#availability';
 import {
   Demand,
   Demands,
   DemandsPerStage,
   PlanningConfiguration,
   ProjectId,
+  RedisConfiguration,
   Stage,
   schema,
   type PlanningFacade,
 } from '#planning';
-import { Capability, ResourceName, TimeSlot } from '#shared';
+import { Capability, TimeSlot } from '#shared';
 import { Duration, ObjectMap } from '#utils';
 import { UTCDate } from '@date-fns/utc';
 import assert from 'node:assert';
@@ -23,14 +24,14 @@ const demandFor = Demand.demandFor;
 const skill = Capability.skill;
 const assertThat = ScheduleAssert.assertThat;
 
-describe('Standard Waterfall', () => {
+void describe('Standard Waterfall', () => {
   const testEnvironment = TestConfiguration();
   let projectFacade: PlanningFacade;
 
   const JAN_1 = new UTCDate('2020-01-01T00:00:00.00Z');
-  const RESOURCE_1 = new ResourceName('r1');
-  const RESOURCE_2 = new ResourceName('r2');
-  const RESOURCE_4 = new ResourceName('r4');
+  const RESOURCE_1 = ResourceId.newOne();
+  const RESOURCE_2 = ResourceId.newOne();
+  const RESOURCE_4 = ResourceId.newOne();
   const JAN_1_2 = new TimeSlot(
     new UTCDate('2020-01-01T00:00:00.00Z'),
     new UTCDate('2020-01-02T00:00:00.00Z'),
@@ -45,16 +46,24 @@ describe('Standard Waterfall', () => {
   );
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString, redisClient } = await testEnvironment.start(
+      {
+        schema,
+      },
+      true,
+    );
 
-    const configuration = new PlanningConfiguration(connectionString);
+    const configuration = new PlanningConfiguration(
+      new RedisConfiguration(redisClient!),
+      connectionString,
+    );
 
     projectFacade = configuration.planningFacade();
   });
 
   after(testEnvironment.stop);
 
-  it('waterfall project process', { skip: 'not implemented yet' }, async () => {
+  void it('waterfall project process', async () => {
     //given
     const projectId = await projectFacade.addNewProject('waterfall');
 

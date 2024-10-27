@@ -1,8 +1,8 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
   AllocationConfiguration,
   Demand,
   Demands,
+  InMemoryProjectAllocationsRepository,
   type AllocationFacade,
 } from '#allocation';
 import * as schema from '#schema';
@@ -12,7 +12,7 @@ import assert from 'node:assert';
 import { after, before, describe, it } from 'node:test';
 import { TestConfiguration } from '../setup';
 
-describe('DemandScheduling', () => {
+void describe('creatingNewProject', () => {
   const JAN = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
   const FEB = TimeSlot.createDailyTimeSlotAtUTC(2021, 2, 1);
 
@@ -20,16 +20,20 @@ describe('DemandScheduling', () => {
   let allocationFacade: AllocationFacade;
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString } = await testEnvironment.start({
+      schema,
+    });
 
     const configuration = new AllocationConfiguration(connectionString);
 
-    allocationFacade = configuration.allocationFacade();
+    allocationFacade = configuration.allocationFacade(
+      new InMemoryProjectAllocationsRepository(),
+    );
   });
 
   after(async () => await testEnvironment.stop());
 
-  it('can create new project', async () => {
+  void it('can create new project', async () => {
     //given
     const demand = new Demand(Capability.skill('JAVA'), JAN);
 
@@ -45,7 +49,7 @@ describe('DemandScheduling', () => {
     assert.ok(deepEquals(summary.timeSlots.get(newProject), JAN));
   });
 
-  it('can redefine project deadline', async () => {
+  void it('can redefine project deadline', async () => {
     //given
     const demand = new Demand(Capability.skill('JAVA'), JAN);
     //and

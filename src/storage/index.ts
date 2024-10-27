@@ -1,9 +1,19 @@
 export { DrizzleRepository, getDB, type PostgresTransaction } from './drizzle';
-export { PostgresRepository, endPool, getPool } from './rawPostgres';
+export { InMemoryRepository } from './inMemoryRepository';
+export {
+  PostgresRepository,
+  endPool,
+  getPool,
+  parseDBDate,
+} from './rawPostgres';
 export { type Repository } from './repository';
 export {
-  injectTransactionContext,
+  dbconnection,
+  injectDatabase,
+  nulloTransactionContext,
   transactional,
+  type DatabaseAware,
   type EnlistableInRawTransaction,
   type EnlistableInTransaction,
+  type PostTransactionCommit,
 } from './transactionalDecorator';

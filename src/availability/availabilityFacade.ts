@@ -1,74 +1,168 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import type { TimeSlot } from '#shared';
 import { transactional } from '#storage';
-import { ResourceGroupedAvailability, Segments, defaultSegment } from '.';
+import {
+  Calendar,
+  Calendars,
+  ResourceGroupedAvailability,
+  Segments,
+  defaultSegment,
+  type ResourceTakenOver,
+} from '.';
+import { dbconnection } from '../storage/transactionalDecorator';
+import { Clock, event, type EventsPublisher, type ObjectSet } from '../utils';
 import type { Owner } from './owner';
-import type { ResourceAvailabilityId } from './resourceAvailabilityId';
+import type { ResourceAvailabilityReadModel } from './resourceAvailabilityReadModel';
 import type { ResourceAvailabilityRepository } from './resourceAvailabilityRepository';
+import type { ResourceId } from './resourceId';
 
 export class AvailabilityFacade {
-  constructor(private readonly repository: ResourceAvailabilityRepository) {}
+  constructor(
+    private readonly availabilityRepository: ResourceAvailabilityRepository,
+    private readonly availabilityReadModel: ResourceAvailabilityReadModel,
+    private readonly eventsPublisher: EventsPublisher,
+    private readonly clock: Clock,
+  ) {}
 
-  @transactional()
+  @transactional
   public createResourceSlots(
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     timeslot: TimeSlot,
-    parentId?: ResourceAvailabilityId,
+    parentId?: ResourceId,
   ): Promise<void> {
     const groupedAvailability = ResourceGroupedAvailability.of(
       resourceId,
       timeslot,
       parentId,
     );
-    return this.repository.saveNewGrouped(groupedAvailability);
+    return this.availabilityRepository.saveNewGrouped(groupedAvailability);
   }
 
-  @transactional()
+  @dbconnection
+  public loadCalendar(
+    resourceId: ResourceId,
+    within: TimeSlot,
+  ): Promise<Calendar> {
+    const normalized = Segments.normalizeToSegmentBoundaries(
+      within,
+      defaultSegment(),
+    );
+    return this.availabilityReadModel.load(resourceId, normalized);
+  }
+
+  @dbconnection
+  public loadCalendars(
+    resources: ObjectSet<ResourceId>,
+    within: TimeSlot,
+  ): Promise<Calendars> {
+    const normalized = Segments.normalizeToSegmentBoundaries(
+      within,
+      defaultSegment(),
+    );
+    return this.availabilityReadModel.loadAll(resources, normalized);
+  }
+
+  @transactional
   public async block(
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     timeSlot: TimeSlot,
     requester: Owner,
   ): Promise<boolean> {
     const toBlock = await this.findGrouped(resourceId, timeSlot);
 
-    const result = toBlock.block(requester);
-
-    if (result) {
-      return this.repository.saveGroupedCheckingVersion(toBlock);
-    }
-    return result;
+    return this.blockGrouped(requester, toBlock);
   }
 
-  @transactional()
+  private blockGrouped = async (
+    requester: Owner,
+    toBlock: ResourceGroupedAvailability,
+  ): Promise<boolean> => {
+    if (toBlock.hasNoSlots()) {
+      return false;
+    }
+    const result = toBlock.block(requester);
+    if (result) {
+      return await this.availabilityRepository.saveGroupedCheckingVersion(
+        toBlock,
+      );
+    }
+    return result;
+  };
+
+  @transactional
   public async release(
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     timeSlot: TimeSlot,
     requester: Owner,
   ): Promise<boolean> {
     const toRelease = await this.findGrouped(resourceId, timeSlot);
+    if (toRelease.hasNoSlots()) {
+      return false;
+    }
     const result = toRelease.release(requester);
     if (result) {
-      return this.repository.saveGroupedCheckingVersion(toRelease);
+      return this.availabilityRepository.saveGroupedCheckingVersion(toRelease);
     }
     return result;
   }
 
-  @transactional()
+  @transactional
   public async disable(
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     timeSlot: TimeSlot,
     requester: Owner,
   ): Promise<boolean> {
     const toDisable = await this.findGrouped(resourceId, timeSlot);
+    if (toDisable.hasNoSlots()) {
+      return false;
+    }
+
+    const previousOwners = toDisable.owners();
     let result = toDisable.disable(requester);
     if (result) {
-      result = await this.repository.saveGroupedCheckingVersion(toDisable);
+      result =
+        await this.availabilityRepository.saveGroupedCheckingVersion(toDisable);
+
+      if (result)
+        await this.eventsPublisher.publish(
+          event<ResourceTakenOver>(
+            'ResourceTakenOver',
+            {
+              resourceId,
+              previousOwners,
+              slot: timeSlot,
+            },
+            this.clock,
+          ),
+        );
     }
     return result;
   }
 
+  @transactional
+  public async blockRandomAvailable(
+    resourceIds: ObjectSet<ResourceId>,
+    within: TimeSlot,
+    owner: Owner,
+  ): Promise<ResourceId | null> {
+    const normalized = Segments.normalizeToSegmentBoundaries(
+      within,
+      defaultSegment(),
+    );
+    const groupedAvailability =
+      await this.availabilityRepository.loadAvailabilitiesOfRandomResourceWithin(
+        resourceIds,
+        normalized,
+      );
+    if (await this.blockGrouped(owner, groupedAvailability)) {
+      return groupedAvailability.resourceId();
+    } else {
+      return null;
+    }
+  }
+
   private findGrouped = async (
-    resourceId: ResourceAvailabilityId,
+    resourceId: ResourceId,
     within: TimeSlot,
   ): Promise<ResourceGroupedAvailability> => {
     const normalized = Segments.normalizeToSegmentBoundaries(
@@ -76,33 +170,44 @@ export class AvailabilityFacade {
       defaultSegment(),
     );
     return new ResourceGroupedAvailability(
-      await this.repository.loadAllWithinSlot(resourceId, normalized),
+      await this.availabilityRepository.loadAllWithinSlot(
+        resourceId,
+        normalized,
+      ),
     );
   };
 
-  public find = async (
-    resourceId: ResourceAvailabilityId,
+  @dbconnection
+  public async find(
+    resourceId: ResourceId,
     within: TimeSlot,
-  ): Promise<ResourceGroupedAvailability> => {
+  ): Promise<ResourceGroupedAvailability> {
     const normalized = Segments.normalizeToSegmentBoundaries(
       within,
       defaultSegment(),
     );
     return new ResourceGroupedAvailability(
-      await this.repository.loadAllWithinSlot(resourceId, normalized),
+      await this.availabilityRepository.loadAllWithinSlot(
+        resourceId,
+        normalized,
+      ),
     );
-  };
+  }
 
-  public findByParentId = async (
-    parentId: ResourceAvailabilityId,
+  @dbconnection
+  public async findByParentId(
+    parentId: ResourceId,
     within: TimeSlot,
-  ): Promise<ResourceGroupedAvailability> => {
+  ): Promise<ResourceGroupedAvailability> {
     const normalized = Segments.normalizeToSegmentBoundaries(
       within,
       defaultSegment(),
     );
     return new ResourceGroupedAvailability(
-      await this.repository.loadAllByParentIdWithinSlot(parentId, normalized),
+      await this.availabilityRepository.loadAllByParentIdWithinSlot(
+        parentId,
+        normalized,
+      ),
     );
-  };
+  }
 }

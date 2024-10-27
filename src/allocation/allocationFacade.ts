@@ -1,23 +1,40 @@
+import { AvailabilityFacade, Owner, ResourceId } from '#availability';
 import { Capability, type TimeSlot } from '#shared';
-import { transactional } from '#storage';
-import { Clock, ObjectSet, type UUID } from '#utils';
+import { dbconnection, transactional } from '#storage';
 import {
+  Clock,
+  ObjectSet,
+  UUID,
+  deepEquals,
+  event,
+  type EventsPublisher,
+} from '#utils';
+import {
+  AllocatableCapabilitiesSummary,
+  AllocatableCapabilityId,
+  AllocatableCapabilitySummary,
   Allocations,
+  CapabilityFinder,
+  CapabilitySelector,
   Demands,
   ProjectAllocations,
   ProjectAllocationsId,
-  ResourceId,
+  type CapabilitiesAllocated,
+  type ProjectAllocationScheduled,
 } from '.';
 import type { ProjectAllocationsRepository } from './projectAllocationsRepository';
 import { ProjectsAllocationsSummary } from './projectsAllocationsSummary';
 
 export class AllocationFacade {
   constructor(
-    private readonly repository: ProjectAllocationsRepository,
+    private readonly projectAllocationsRepository: ProjectAllocationsRepository,
+    private readonly availabilityFacade: AvailabilityFacade,
+    private readonly capabilityFinder: CapabilityFinder,
+    private readonly eventsPublisher: EventsPublisher,
     private readonly clock: Clock,
   ) {}
 
-  @transactional()
+  @transactional
   public async createAllocation(
     timeSlot: TimeSlot,
     scheduledDemands: Demands,
@@ -29,73 +46,187 @@ export class AllocationFacade {
       scheduledDemands,
       timeSlot,
     );
-    await this.repository.save(projectAllocations);
+    await this.projectAllocationsRepository.save(projectAllocations);
+
+    await this.eventsPublisher.publish(
+      event<ProjectAllocationScheduled>(
+        'ProjectAllocationScheduled',
+        {
+          fromTo: timeSlot,
+          projectId,
+        },
+        this.clock,
+      ),
+    );
     return projectId;
   }
 
+  @dbconnection
   public async findAllProjectsAllocations(
     projectIds?: ObjectSet<ProjectAllocationsId>,
   ): Promise<ProjectsAllocationsSummary> {
     return ProjectsAllocationsSummary.of(
       projectIds
-        ? await this.repository.findAllById(projectIds)
-        : await this.repository.findAll(),
+        ? await this.projectAllocationsRepository.findAllById(projectIds)
+        : await this.projectAllocationsRepository.findAll(),
     );
   }
 
-  @transactional()
+  @transactional
   public async allocateToProject(
     projectId: ProjectAllocationsId,
-    resourceId: ResourceId,
-    capability: Capability,
+    allocatableCapabilityId: AllocatableCapabilityId,
     timeSlot: TimeSlot,
   ): Promise<UUID | null> {
-    const allocations = await this.repository.getById(projectId);
+    const capability = await this.capabilityFinder.findById(
+      allocatableCapabilityId,
+    );
+    if (capability == null) return null;
+
+    //yes, one transaction crossing 2 modules.
+    if (!(await this.capabilityFinder.isPresent(allocatableCapabilityId))) {
+      return null;
+    }
+    if (
+      !(await this.availabilityFacade.block(
+        AllocatableCapabilityId.toAvailabilityResourceId(
+          allocatableCapabilityId,
+        ),
+        timeSlot,
+        Owner.of(projectId),
+      ))
+    ) {
+      return null;
+    }
+
+    const event = await this.allocate(
+      projectId,
+      allocatableCapabilityId,
+      capability.capabilities,
+      timeSlot,
+    );
+    return event?.data.allocatedCapabilityId ?? null;
+  }
+
+  private allocate = async (
+    projectId: ProjectAllocationsId,
+    allocatableCapabilityId: AllocatableCapabilityId,
+    capability: CapabilitySelector,
+    timeSlot: TimeSlot,
+  ): Promise<CapabilitiesAllocated | null> => {
+    const allocations =
+      await this.projectAllocationsRepository.getById(projectId);
     const event = allocations.allocate(
-      resourceId,
+      allocatableCapabilityId,
       capability,
       timeSlot,
       this.clock.now(),
     );
-    await this.repository.save(allocations);
-    return event?.allocatedCapabilityId ?? null;
-  }
+    await this.projectAllocationsRepository.save(allocations);
+    return event;
+  };
 
-  @transactional()
+  @transactional
   public async releaseFromProject(
     projectId: ProjectAllocationsId,
-    allocatableCapabilityId: UUID,
+    allocatableCapabilityId: AllocatableCapabilityId,
     timeSlot: TimeSlot,
   ): Promise<boolean> {
-    const allocations = await this.repository.getById(projectId);
+    //can release not scheduled capability - at least for now. Hence no check to capabilityFinder
+    await this.availabilityFacade.release(
+      AllocatableCapabilityId.toAvailabilityResourceId(allocatableCapabilityId),
+      timeSlot,
+      Owner.of(projectId),
+    );
+    const allocations =
+      await this.projectAllocationsRepository.getById(projectId);
     const event = allocations.release(
       allocatableCapabilityId,
       timeSlot,
       this.clock.now(),
     );
-    await this.repository.save(allocations);
+    await this.projectAllocationsRepository.save(allocations);
     return event !== null;
   }
 
-  @transactional()
+  @transactional
+  public async allocateCapabilityToProjectForPeriod(
+    projectId: ProjectAllocationsId,
+    capability: Capability,
+    timeSlot: TimeSlot,
+  ): Promise<boolean> {
+    const proposedCapabilities = await this.capabilityFinder.findCapabilities(
+      capability,
+      timeSlot,
+    );
+    if (proposedCapabilities.all.length === 0) {
+      return false;
+    }
+    const availabilityResourceIds = ObjectSet.from(
+      proposedCapabilities.all.map((resource) =>
+        AllocatableCapabilityId.toAvailabilityResourceId(resource.id),
+      ),
+    );
+    const chosen = await this.availabilityFacade.blockRandomAvailable(
+      availabilityResourceIds,
+      timeSlot,
+      Owner.of(projectId),
+    );
+    if (chosen === null) {
+      return false;
+    }
+    const toAllocate = this.findChosenAllocatableCapability(
+      proposedCapabilities,
+      chosen,
+    );
+    return (
+      (await this.allocate(
+        projectId,
+        toAllocate.id,
+        toAllocate.capabilities,
+        timeSlot,
+      )) !== null
+    );
+  }
+
+  private findChosenAllocatableCapability(
+    proposedCapabilities: AllocatableCapabilitiesSummary,
+    chosen: ResourceId,
+  ): AllocatableCapabilitySummary {
+    return (
+      proposedCapabilities.all.filter((summary) =>
+        deepEquals(
+          AllocatableCapabilityId.toAvailabilityResourceId(summary.id),
+          chosen,
+        ),
+      )[0] ?? null
+    );
+  }
+
+  @transactional
   public async editProjectDates(
     projectId: ProjectAllocationsId,
     fromTo: TimeSlot,
   ): Promise<void> {
-    const projectAllocations = await this.repository.getById(projectId);
-    projectAllocations.defineSlot(fromTo, this.clock.now());
-    await this.repository.save(projectAllocations);
+    const projectAllocations =
+      await this.projectAllocationsRepository.getById(projectId);
+    const event = projectAllocations.defineSlot(fromTo, this.clock.now());
+
+    await this.projectAllocationsRepository.save(projectAllocations);
+
+    if (event) await this.eventsPublisher.publish(event);
   }
 
-  @transactional()
+  @transactional
   public async scheduleProjectAllocationDemands(
     projectId: ProjectAllocationsId,
     demands: Demands,
   ): Promise<void> {
     const projectAllocations =
-      (await this.repository.findById(projectId)) ??
+      (await this.projectAllocationsRepository.findById(projectId)) ??
       ProjectAllocations.empty(projectId);
-    projectAllocations.addDemands(demands, this.clock.now());
-    await this.repository.save(projectAllocations);
+    const event = projectAllocations.addDemands(demands, this.clock.now());
+    await this.projectAllocationsRepository.save(projectAllocations);
+    if (event) await this.eventsPublisher.publish(event);
   }
 }

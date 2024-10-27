@@ -1,52 +1,70 @@
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
   AvailabilityConfiguration,
   AvailabilityFacade,
+  Calendar,
   Owner,
-  ResourceAvailabilityId,
+  ResourceId,
+  Segments,
+  type ResourceTakenOver,
 } from '#availability';
 import * as schema from '#schema';
 import { TimeSlot } from '#shared';
+import { Duration, ObjectSet } from '#utils';
 import { addMinutes } from 'date-fns';
 import assert from 'node:assert';
-import { after, before, describe, it } from 'node:test';
+import { after, afterEach, before, describe, it } from 'node:test';
+import {
+  assertFalse,
+  assertThat,
+  assertThatArray,
+  assertTrue,
+} from '../asserts';
 import { TestConfiguration } from '../setup';
 
-describe('AvailabilityFacade', () => {
+void describe('AvailabilityFacade', () => {
   const testEnvironment = TestConfiguration();
   let availabilityFacade: AvailabilityFacade;
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString } = await testEnvironment.start({ schema });
 
-    const configuration = new AvailabilityConfiguration(connectionString);
+    const configuration = new AvailabilityConfiguration(
+      connectionString,
+      testEnvironment.utilsConfiguration,
+    );
 
     availabilityFacade = configuration.availabilityFacade();
   });
 
+  afterEach(testEnvironment.clearTestData);
+
   after(testEnvironment.stop);
 
-  it('can create availability slots', async () => {
+  void it('can create availability slots', async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
 
     //when
     await availabilityFacade.createResourceSlots(resourceId, oneDay);
 
     //then
-    assert.equal(
-      (await availabilityFacade.find(resourceId, oneDay)).size(),
-      96,
+    const entireMonth = TimeSlot.createMonthlyTimeSlotAtUTC(2021, 1);
+    const monthlyCalendar = await availabilityFacade.loadCalendar(
+      resourceId,
+      entireMonth,
+    );
+    assertThat(monthlyCalendar).isEqualTo(
+      Calendar.withAvailableSlots(resourceId, oneDay),
     );
   });
 
-  it('can create new availability slots with parent id', async () => {
+  void it('can create new availability slots with parent id', async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
-    const resourceId2 = ResourceAvailabilityId.newOne();
-    const parentId = ResourceAvailabilityId.newOne();
-    const differentParentId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
+    const resourceId2 = ResourceId.newOne();
+    const parentId = ResourceId.newOne();
+    const differentParentId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
 
     //when
@@ -58,21 +76,21 @@ describe('AvailabilityFacade', () => {
     );
 
     //then
-    assert.equal(
-      (await availabilityFacade.findByParentId(parentId, oneDay)).size(),
-      96,
+    assertTrue(
+      (
+        await availabilityFacade.findByParentId(parentId, oneDay)
+      ).isEntirelyWithParentId(parentId),
     );
-    assert.equal(
+    assertTrue(
       (
         await availabilityFacade.findByParentId(differentParentId, oneDay)
-      ).size(),
-      96,
+      ).isEntirelyWithParentId(differentParentId),
     );
   });
 
-  it('can block availabilities', async () => {
+  void it('can block availabilities', async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
     const owner = Owner.newOne();
     await availabilityFacade.createResourceSlots(resourceId, oneDay);
@@ -82,17 +100,31 @@ describe('AvailabilityFacade', () => {
 
     //then
     assert.ok(result);
-    const resourceAvailabilities = await availabilityFacade.find(
+    const entireMonth = TimeSlot.createMonthlyTimeSlotAtUTC(2021, 1);
+    const monthlyCalendar = await availabilityFacade.loadCalendar(
       resourceId,
-      oneDay,
+      entireMonth,
     );
-    assert.equal(resourceAvailabilities.size(), 96);
-    assert.ok(resourceAvailabilities.blockedEntirelyBy(owner));
+    assertThatArray(monthlyCalendar.availableSlots()).isEmpty();
+    assertThatArray(monthlyCalendar.takenBy(owner)).containsExactly(oneDay);
   });
 
-  it('can disable availabilities', async () => {
+  void it('cant block when no slots created', async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
+    const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
+    const owner = Owner.newOne();
+
+    //when
+    const result = await availabilityFacade.block(resourceId, oneDay, owner);
+
+    //then
+    assertFalse(result);
+  });
+
+  void it('can disable availabilities', async () => {
+    //given
+    const resourceId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
     const owner = Owner.newOne();
     await availabilityFacade.createResourceSlots(resourceId, oneDay);
@@ -106,13 +138,32 @@ describe('AvailabilityFacade', () => {
       resourceId,
       oneDay,
     );
-    assert.equal(resourceAvailabilities.size(), 96);
     assert.ok(resourceAvailabilities.isDisabledEntirelyBy(owner));
+    const entireMonth = TimeSlot.createMonthlyTimeSlotAtUTC(2021, 1);
+    const monthlyCalendar = await availabilityFacade.loadCalendar(
+      resourceId,
+      entireMonth,
+    );
+    assertThatArray(monthlyCalendar.availableSlots()).isEmpty();
+    assertThatArray(monthlyCalendar.takenBy(owner)).containsExactly(oneDay);
   });
 
-  it('cant block even when just small segment of requested slot is blocked', async () => {
+  void it(`can't disable when no slots created`, async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
+    const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
+    const owner = Owner.newOne();
+
+    //when
+    const result = await availabilityFacade.disable(resourceId, oneDay, owner);
+
+    //then
+    assertFalse(result);
+  });
+
+  void it('cant block even when just small segment of requested slot is blocked', async () => {
+    //given
+    const resourceId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
     const owner = Owner.newOne();
     await availabilityFacade.createResourceSlots(resourceId, oneDay);
@@ -139,9 +190,9 @@ describe('AvailabilityFacade', () => {
     assert.ok(resourceAvailabilities.blockedEntirelyBy(owner));
   });
 
-  it('can release availability', async () => {
+  void it('can release availability', async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
     const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
     const fifteenMinutes = new TimeSlot(
       oneDay.from,
@@ -164,9 +215,22 @@ describe('AvailabilityFacade', () => {
     assert.ok(resourceAvailabilities.isEntirelyAvailable());
   });
 
-  it(`can't release even when just part of slot is owned by the requester`, async () => {
+  void it(`can't release when no slots created`, async () => {
     //given
-    const resourceId = ResourceAvailabilityId.newOne();
+    const resourceId = ResourceId.newOne();
+    const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
+    const owner = Owner.newOne();
+
+    //when
+    const result = await availabilityFacade.release(resourceId, oneDay, owner);
+
+    //then
+    assertFalse(result);
+  });
+
+  void it(`can't release even when just part of slot is owned by the requester`, async () => {
+    //given
+    const resourceId = ResourceId.newOne();
     const jan_1 = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
     const jan_2 = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 2);
     const jan_1_2 = new TimeSlot(jan_1.from, jan_2.to);
@@ -194,37 +258,76 @@ describe('AvailabilityFacade', () => {
     assert.ok(resourceAvailability.blockedEntirelyBy(jan1owner));
   });
 
-  it('one segment can be taken by someone else after realising', async () => {
-    //given
-    const resourceId = ResourceAvailabilityId.newOne();
-    const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
-    const fifteenMinutes = new TimeSlot(
-      oneDay.from,
-      addMinutes(oneDay.from, 15),
+  void it('one segment can be taken by someone else after realising', async () => {
+    const resourceId = ResourceId.newOne();
+    const durationOfSevenSlots = Duration.ofMinutes(
+      7 * Segments.DEFAULT_SEGMENT_DURATION_IN_MINUTES,
+    );
+    const sevenSlots = TimeSlot.createTimeSlotAtUTCOfDuration(
+      2021,
+      1,
+      1,
+      durationOfSevenSlots,
+    );
+    const minimumSlot = new TimeSlot(
+      sevenSlots.from,
+      addMinutes(sevenSlots.from, Segments.DEFAULT_SEGMENT_DURATION_IN_MINUTES),
     );
     const owner = Owner.newOne();
-    await availabilityFacade.createResourceSlots(resourceId, oneDay);
+    await availabilityFacade.createResourceSlots(resourceId, sevenSlots);
     //and
-    await availabilityFacade.block(resourceId, oneDay, owner);
+    await availabilityFacade.block(resourceId, sevenSlots, owner);
     //and
-    await availabilityFacade.release(resourceId, fifteenMinutes, owner);
+    await availabilityFacade.release(resourceId, minimumSlot, owner);
 
     //when
     const newRequester = Owner.newOne();
     const result = await availabilityFacade.block(
       resourceId,
-      fifteenMinutes,
+      minimumSlot,
       newRequester,
     );
 
     //then
-    assert.ok(result);
-    const resourceAvailability = await availabilityFacade.find(
+    assertTrue(result);
+    const entireCalendar = await availabilityFacade.loadCalendar(
+      resourceId,
+      sevenSlots,
+    );
+    assertThatArray(entireCalendar.availableSlots()).isEmpty();
+    assertThatArray(entireCalendar.takenBy(owner)).containsExactlyElementsOf(
+      sevenSlots.leftoverAfterRemovingCommonWith(minimumSlot),
+    );
+    assertThatArray(entireCalendar.takenBy(newRequester)).containsExactly(
+      minimumSlot,
+    );
+  });
+
+  void it('Resource taken over event is emitted after taking over the resource', async () => {
+    //given
+    const resourceId = ResourceId.newOne();
+    const oneDay = TimeSlot.createDailyTimeSlotAtUTC(2021, 1, 1);
+    const initialOwner = Owner.newOne();
+    const newOwner = Owner.newOne();
+    await availabilityFacade.createResourceSlots(resourceId, oneDay);
+    await availabilityFacade.block(resourceId, oneDay, initialOwner);
+
+    //when
+    const result = await availabilityFacade.disable(
       resourceId,
       oneDay,
+      newOwner,
     );
-    assert.equal(resourceAvailability.size(), 96);
-    assert.equal(resourceAvailability.findBlockedBy(owner).length, 95);
-    assert.equal(resourceAvailability.findBlockedBy(newRequester).length, 1);
+
+    //then
+    assertTrue(result);
+    testEnvironment.eventBus.verifyPublishedEvent<ResourceTakenOver>(
+      'ResourceTakenOver',
+      {
+        resourceId,
+        previousOwners: ObjectSet.of(initialOwner),
+        slot: oneDay,
+      },
+    );
   });
 });

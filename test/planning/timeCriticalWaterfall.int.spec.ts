@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-floating-promises */
 import {
   Demand,
   PlanningConfiguration,
+  RedisConfiguration,
   Stage,
   schema,
   type PlanningFacade,
@@ -19,7 +19,7 @@ const demandFor = Demand.demandFor;
 const skill = Capability.skill;
 const assertThat = ScheduleAssert.assertThat;
 
-describe('Time Critical Waterfall', () => {
+void describe('Time Critical Waterfall', () => {
   const testEnvironment = TestConfiguration();
   let projectFacade: PlanningFacade;
 
@@ -37,51 +37,53 @@ describe('Time Critical Waterfall', () => {
   );
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString, redisClient } = await testEnvironment.start(
+      { schema },
+      true,
+    );
 
-    const configuration = new PlanningConfiguration(connectionString);
+    const configuration = new PlanningConfiguration(
+      new RedisConfiguration(redisClient!),
+      connectionString,
+    );
 
     projectFacade = configuration.planningFacade();
   });
 
   after(testEnvironment.stop);
 
-  it(
-    'time critical waterfall project process',
-    { skip: 'not implemented yet' },
-    async () => {
-      //given
-      const projectId = await projectFacade.addNewProject('waterfall');
-      //and
-      const stageBeforeCritical = new Stage('stage1').ofDuration(
-        Duration.ofDays(2),
-      );
-      const criticalStage = new Stage('stage2').ofDuration(JAN_1_5.duration());
-      const stageAfterCritical = new Stage('stage3').ofDuration(
-        Duration.ofDays(3),
-      );
-      await projectFacade.defineProjectStages(
-        projectId,
-        stageBeforeCritical,
-        criticalStage,
-        stageAfterCritical,
-      );
+  void it('time critical waterfall project process', async () => {
+    //given
+    const projectId = await projectFacade.addNewProject('waterfall');
+    //and
+    const stageBeforeCritical = new Stage('stage1').ofDuration(
+      Duration.ofDays(2),
+    );
+    const criticalStage = new Stage('stage2').ofDuration(JAN_1_5.duration());
+    const stageAfterCritical = new Stage('stage3').ofDuration(
+      Duration.ofDays(3),
+    );
+    await projectFacade.defineProjectStages(
+      projectId,
+      stageBeforeCritical,
+      criticalStage,
+      stageAfterCritical,
+    );
 
-      //when
-      await projectFacade.planCriticalStage(projectId, criticalStage, JAN_1_5);
+    //when
+    await projectFacade.planCriticalStage(projectId, criticalStage, JAN_1_5);
 
-      //then
-      const project = await projectFacade.load(projectId);
-      const schedule = project.schedule;
-      assertThat(schedule)
-        .hasStage('stage1')
-        .withSlot(JAN_1_3)
-        .and()
-        .hasStage('stage2')
-        .withSlot(JAN_1_5)
-        .and()
-        .hasStage('stage3')
-        .withSlot(JAN_1_4);
-    },
-  );
+    //then
+    const project = await projectFacade.load(projectId);
+    const schedule = project.schedule;
+    assertThat(schedule)
+      .hasStage('stage1')
+      .withSlot(JAN_1_3)
+      .and()
+      .hasStage('stage2')
+      .withSlot(JAN_1_5)
+      .and()
+      .hasStage('stage3')
+      .withSlot(JAN_1_4);
+  });
 });

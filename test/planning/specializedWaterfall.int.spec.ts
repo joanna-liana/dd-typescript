@@ -1,14 +1,14 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-floating-promises */
-import { ResourceId } from '#allocation';
+import { ResourceId } from '#availability';
 import {
   PlanningConfiguration,
   ProjectId,
+  RedisConfiguration,
   Stage,
   schema,
   type PlanningFacade,
 } from '#planning';
-import { Capability, ResourceName, TimeSlot } from '#shared';
+import { Capability, TimeSlot } from '#shared';
 import { Duration } from '#utils';
 import { UTCDate } from '@date-fns/utc';
 import { after, before, describe, it } from 'node:test';
@@ -17,7 +17,7 @@ import { ScheduleAssert } from './schedule/assertions';
 
 const assertThat = ScheduleAssert.assertThat;
 
-describe('Specialized Waterfall', () => {
+void describe('Specialized Waterfall', () => {
   const testEnvironment = TestConfiguration();
   let projectFacade: PlanningFacade;
 
@@ -43,89 +43,87 @@ describe('Specialized Waterfall', () => {
   );
 
   before(async () => {
-    const connectionString = await testEnvironment.start({ schema });
+    const { connectionString, redisClient } = await testEnvironment.start(
+      { schema },
+      true,
+    );
 
-    const configuration = new PlanningConfiguration(connectionString);
+    const configuration = new PlanningConfiguration(
+      new RedisConfiguration(redisClient!),
+      connectionString,
+    );
 
     projectFacade = configuration.planningFacade();
   });
 
   after(testEnvironment.stop);
 
-  it(
-    'specialized waterfall project process',
-    { skip: 'not implemented yet' },
-    async () => {
-      //given
-      const projectId = await projectFacade.addNewProject('waterfall');
-      //and
-      const criticalStageDuration = Duration.ofDays(5);
-      const stage1Duration = Duration.ofDays(1);
-      const stageBeforeCritical = new Stage('stage1').ofDuration(
-        stage1Duration,
-      );
-      const criticalStage = new Stage('stage2').ofDuration(
-        criticalStageDuration,
-      );
-      const stageAfterCritical = new Stage('stage3').ofDuration(
-        Duration.ofDays(3),
-      );
-      await projectFacade.defineProjectStages(
-        projectId,
-        stageBeforeCritical,
-        criticalStage,
-        stageAfterCritical,
-      );
+  void void it('specialized waterfall project process', async () => {
+    //given
+    const projectId = await projectFacade.addNewProject('waterfall');
+    //and
+    const criticalStageDuration = Duration.ofDays(5);
+    const stage1Duration = Duration.ofDays(1);
+    const stageBeforeCritical = new Stage('stage1').ofDuration(stage1Duration);
+    const criticalStage = new Stage('stage2').ofDuration(criticalStageDuration);
+    const stageAfterCritical = new Stage('stage3').ofDuration(
+      Duration.ofDays(3),
+    );
+    await projectFacade.defineProjectStages(
+      projectId,
+      stageBeforeCritical,
+      criticalStage,
+      stageAfterCritical,
+    );
 
-      //and
-      const criticalResourceName = new ResourceName('criticalResourceName');
-      const criticalCapabilityAvailability =
-        resourceAvailableForCapabilityInPeriod(
-          criticalResourceName,
-          Capability.skill('JAVA'),
-          JAN_1_6,
-        );
-
-      //when
-      await projectFacade.planCriticalStageWithResource(
-        projectId,
-        criticalStage,
+    //and
+    const criticalResourceName = ResourceId.newOne();
+    const criticalCapabilityAvailability =
+      resourceAvailableForCapabilityInPeriod(
         criticalResourceName,
-        JAN_4_8,
-      );
-
-      //then
-      await verifyResourcesNotAvailable(
-        projectId,
-        criticalCapabilityAvailability,
-        JAN_4_8,
-      );
-
-      //when
-      await projectFacade.planCriticalStageWithResource(
-        projectId,
-        criticalStage,
-        criticalResourceName,
+        Capability.skill('JAVA'),
         JAN_1_6,
       );
 
-      //then
-      await assertResourcesAvailable(projectId, criticalCapabilityAvailability);
-      //and
-      const project = await projectFacade.load(projectId);
-      const schedule = project.schedule;
+    //when
+    await projectFacade.planCriticalStageWithResource(
+      projectId,
+      criticalStage,
+      criticalResourceName,
+      JAN_4_8,
+    );
 
-      assertThat(schedule)
-        .hasStage('stage1')
-        .withSlot(JAN_1_2)
-        .and()
-        .hasStage('stage2')
-        .withSlot(JAN_1_6)
-        .and()
-        .hasStage('stage3')
-        .withSlot(JAN_1_4);
-    },
-  );
+    //then
+    await verifyResourcesNotAvailable(
+      projectId,
+      criticalCapabilityAvailability,
+      JAN_4_8,
+    );
+
+    //when
+    await projectFacade.planCriticalStageWithResource(
+      projectId,
+      criticalStage,
+      criticalResourceName,
+      JAN_1_6,
+    );
+
+    //then
+    await assertResourcesAvailable(projectId, criticalCapabilityAvailability);
+    //and
+    const project = await projectFacade.load(projectId);
+    const schedule = project.schedule;
+
+    assertThat(schedule)
+      .hasStage('stage1')
+      .withSlot(JAN_1_2)
+      .and()
+      .hasStage('stage2')
+      .withSlot(JAN_1_6)
+      .and()
+      .hasStage('stage3')
+      .withSlot(JAN_1_4);
+  });
 
   const assertResourcesAvailable = (
     projectId: ProjectId,
@@ -143,7 +141,7 @@ describe('Specialized Waterfall', () => {
   };
 
   const resourceAvailableForCapabilityInPeriod = (
-    resource: ResourceName,
+    resource: ResourceId,
     capability: Capability,
     slot: TimeSlot,
   ): ResourceId => {
